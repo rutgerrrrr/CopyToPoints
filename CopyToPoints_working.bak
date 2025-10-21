@@ -9,7 +9,7 @@ def run(context):
         app = adsk.core.Application.get()
         ui = app.userInterface
         
-        # Create the command definition if it doesn't exist
+        # Create the command definition
         cmdDef = ui.commandDefinitions.itemById('CopyToPointsCmd')
         if not cmdDef:
             cmdDef = ui.commandDefinitions.addButtonDefinition('CopyToPointsCmd',
@@ -22,55 +22,24 @@ def run(context):
         cmdDef.commandCreated.add(onCommandCreated)
         handlers.append(onCommandCreated)
 
-        # Get the Design workspace
-        designWS = ui.workspaces.itemById('FusionSolidEnvironment')
+        # Execute the command
+        cmdDef.execute()
 
-        # Get the Solid Create panel
-        createPanel = designWS.toolbarPanels.itemById('SolidCreatePanel')
-
-        # Add the button to the panel if it doesn't already exist
-        buttonControl = createPanel.controls.itemById('CopyToPointsCmd')
-        if not buttonControl:
-            buttonControl = createPanel.controls.addCommand(cmdDef)
-            # Optionally position it after a specific command, e.g., after 'EmbossCmd'
-            # buttonControl = createPanel.controls.addCommand(cmdDef, 'EmbossCmd', False)
-
-        # Make the button visible in the panel
-        buttonControl.isPromotedByDefault = True
-        buttonControl.isPromoted = True
+        # Keep the script running until the command completes
+        adsk.autoTerminate(False)
         
     except:
         if ui:
             ui.messageBox('Failed:\n{}'.format(traceback.format_exc()))
 
 def stop(context):
-    ui = None
     try:
-        app = adsk.core.Application.get()
-        ui = app.userInterface
-
-        # Get the Design workspace
-        designWS = ui.workspaces.itemById('FusionSolidEnvironment')
-
-        # Get the Solid Create panel
-        createPanel = designWS.toolbarPanels.itemById('SolidCreatePanel')
-
-        # Delete the button control if it exists
-        buttonControl = createPanel.controls.itemById('CopyToPointsCmd')
-        if buttonControl:
-            buttonControl.deleteMe()
-
-        # Delete the command definition if it exists
-        cmdDef = ui.commandDefinitions.itemById('CopyToPointsCmd')
-        if cmdDef:
-            cmdDef.deleteMe()
-
         # Clean up handlers
-        handlers[:] = []
-        
+        for h in handlers:
+            pass
+        adsk.autoTerminate(True)
     except:
-        if ui:
-            ui.messageBox('Failed to stop:\n{}'.format(traceback.format_exc()))
+        pass
 
 class CopyToPointsCommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
     def __init__(self):
@@ -91,8 +60,6 @@ class CopyToPointsCommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
             originInput = inputs.addSelectionInput('originPoint', 'Origin Point', 'Select the origin point on the component')
             originInput.addSelectionFilter('SketchPoints')
             originInput.addSelectionFilter('Vertices')
-            originInput.addSelectionFilter('ConstructionPoints')
-            
             originInput.setSelectionLimits(1, 1)
             originInput.tooltip = 'Select a point (vertex or sketch point) on the component that will align to each target point.'
 
@@ -104,11 +71,6 @@ class CopyToPointsCommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
             targetInput.setSelectionLimits(1, 100)  # Up to 100 targets; adjust as needed
             targetInput.tooltip = 'Select one or more target points. Use Ctrl/Cmd to multi-select.'
 
-            # Connect to selection events to auto-advance focus
-            onSelection = CopyToPointsSelectionEventHandler(compInput, originInput, targetInput)
-            cmd.inputChanged.add(onSelection)
-            handlers.append(onSelection)
-            
             # Connect to the execute event
             onExecute = CopyToPointsCommandExecuteHandler()
             cmd.execute.add(onExecute)
@@ -121,26 +83,6 @@ class CopyToPointsCommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
 
         except:
             adsk.core.Application.get().userInterface.messageBox('Failed to create command inputs:\n{}'.format(traceback.format_exc()))
-
-class CopyToPointsSelectionEventHandler(adsk.core.InputChangedEventHandler):
-    def __init__(self, compInput, originInput, targetInput):
-        super().__init__()
-        self.compInput = compInput
-        self.originInput = originInput
-        self.targetInput = targetInput
-
-    def notify(self, args):
-        try:            
-            # Check which input is active and advance to the next
-            activeInput = args.input
-            if activeInput.id == 'component' and activeInput.selectionCount == 1:
-                # self.originInput.activate()
-                self.originInput.hasFocus = True
-            elif activeInput.id == 'originPoint' and activeInput.selectionCount == 1:
-                # self.targetInput.activate()
-                self.targetInput.hasFocus = True
-        except:
-            adsk.core.Application.get().userInterface.messageBox('Selection event failed:\n{}'.format(traceback.format_exc()))
 
 class CopyToPointsCommandExecuteHandler(adsk.core.CommandEventHandler):
     def __init__(self):
@@ -182,10 +124,7 @@ class CopyToPointsCommandExecuteHandler(adsk.core.CommandEventHandler):
                 ui.messageBox('Invalid origin point geometry.')
                 return
 
-            # Counter for successful copies
-            success_count = 0
-
-            # Create linked copies and place them
+            # Create copies and place them
             for i, targetPoint in enumerate(targetPoints):
                 targetPos = targetPoint.worldGeometry if hasattr(targetPoint, 'worldGeometry') else targetPoint.geometry
                 if not isinstance(targetPos, adsk.core.Point3D):
@@ -200,14 +139,15 @@ class CopyToPointsCommandExecuteHandler(adsk.core.CommandEventHandler):
                 delta.subtract(originPos.asVector())
                 transform.translation = delta
 
-                # Create a linked copy of the component
+                # Create a copy of the component
+                # newOccurrence = rootComp.occurrences.addNewComponentCopy(component.component, transform)
                 newOccurrence = rootComp.occurrences.addExistingComponent(component.component, transform)
                 if newOccurrence:
-                    success_count += 1
+                    ui.messageBox(f'Copied component {i+1}/{len(targetPoints)} placed at target point.')
                 else:
                     ui.messageBox(f'Failed to create copy {i+1}.')
 
-            ui.messageBox(f'{success_count} linked component copies placed successfully!')
+            ui.messageBox('All components copied and placed successfully!')
 
         except:
             ui = adsk.core.Application.get().userInterface
